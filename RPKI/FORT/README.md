@@ -8,8 +8,6 @@ Source build, RPKI validation, systemd service, and RTR access from the local ne
 
 This guide consolidates the steps that were tested successfully on Ubuntu Server 26.04 to install FORT 1.7.0.experimental. The official `.deb` package was not used because it declares legacy dependency package names that Ubuntu 26.04 no longer provides.
 
-
-
 ## 1. Verified environment
 
 | Component | Verified value |
@@ -22,11 +20,9 @@ This guide consolidates the steps that were tested successfully on Ubuntu Server
 | Local RPKI repository | `/var/lib/fort/repository` |
 | VRP/ROA output | `/var/lib/fort/output/validated-roas.csv` |
 | Service | `fort.service` |
-| RTR port | TCP `8323` |
+| RTR port | TCP `8323` by default in this guide; optional standard TCP `323` via systemd capabilities |
 | Maximum RTR version | `1` |
 | Recommended time zone | UTC |
-
-
 
 ## 2. Why FORT is built from source
 
@@ -45,8 +41,6 @@ libxml2-16
 ```
 
 The verified solution was to compile FORT against the native Ubuntu 26.04 libraries. Do not force dependencies or mix packages from older Ubuntu or Debian releases.
-
-
 
 ## 3. Install build dependencies
 
@@ -77,8 +71,6 @@ apt-cache policy \
     libmicrohttpd-dev \
     libmicrohttpd12t64
 ```
-
-
 
 ## 4. Download, build, and install FORT 1.7.0.experimental
 
@@ -111,8 +103,6 @@ The expected binary location after `make install` is:
 /usr/local/bin/fort
 ```
 
-
-
 ## 5. Verify linked libraries
 
 ```bash
@@ -132,8 +122,6 @@ libssl.so.3
 
 No library should be reported as `not found`.
 
-
-
 ## 6. Create the service account and directories
 
 ```bash
@@ -152,8 +140,6 @@ sudo install -d -o fort -g fort -m 0750 /var/lib/fort/repository
 sudo install -d -o fort -g fort -m 0750 /var/lib/fort/output
 ```
 
-
-
 ## 7. Initialize the TAL files
 
 ```bash
@@ -169,8 +155,6 @@ sudo find /etc/fort/tal \
     -name '*.tal' \
     -print
 ```
-
-
 
 ## 8. Run the first manual validation
 
@@ -196,8 +180,6 @@ vmstat 1
 
 CPU usage above 100% means that the process is using more than one core. With 2 vCPUs, the theoretical maximum is approximately 200%.
 
-
-
 ## 9. Verify the validation result
 
 ```bash
@@ -216,8 +198,6 @@ File size: approximately 24 MB
 Total lines: 887046
 Header: ASN,Prefix,Max prefix length
 ```
-
-
 
 ## 10. Create the permanent configuration
 
@@ -279,8 +259,6 @@ sudo -u fort test -r /etc/fort/config.json && \
     echo "FORT user can read the configuration."
 ```
 
-
-
 ## 11. Test the configuration outside systemd
 
 ```bash
@@ -302,8 +280,6 @@ output.roa: /var/lib/fort/output/validated-roas.csv
 ```
 
 It should also report that all configured sockets were opened successfully. Stop this foreground test with `Ctrl+C` before starting the systemd service.
-
-
 
 ## 12. Create the systemd service
 
@@ -353,8 +329,107 @@ sudo journalctl -u fort -n 100 --no-pager
 ```
 
 
+## 13. Optional: use the standard RTR port 323 with systemd capabilities
 
-## 13. Verify RTR and local-network access
+TCP port `323` is the standard port assigned to RPKI-RTR. Because ports below `1024` are privileged on Linux, the unprivileged `fort` service account cannot bind to port `323` unless systemd grants the specific capability required for this operation.
+
+This method keeps FORT running as the dedicated `fort` user and does not require running the service as `root`.
+
+Edit the service unit:
+
+```bash
+sudo nano /etc/systemd/system/fort.service
+```
+
+Add the following two directives inside the existing `[Service]` section:
+
+```ini
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+```
+
+The complete `[Service]` section should then look like this:
+
+```ini
+[Service]
+Type=simple
+User=fort
+Group=fort
+Environment="MALLOC_ARENA_MAX=2"
+ExecStart=/usr/local/bin/fort --configuration-file /etc/fort/config.json
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+```
+
+Edit the FORT configuration:
+
+```bash
+sudo nano /etc/fort/config.json
+```
+
+Change the RTR port from:
+
+```json
+"port": "8323"
+```
+
+to:
+
+```json
+"port": "323"
+```
+
+Validate the JSON, reload systemd, and restart FORT:
+
+```bash
+sudo python3 -m json.tool /etc/fort/config.json > /dev/null && \
+    echo "JSON syntax is valid."
+
+sudo systemctl daemon-reload
+sudo systemctl restart fort
+sudo systemctl status fort
+```
+
+Verify that FORT is listening on TCP port `323`:
+
+```bash
+sudo ss -lntp | grep ':323'
+```
+
+Expected listeners include the configured local and LAN addresses, for example:
+
+```text
+127.0.0.1:323
+[::1]:323
+10.0.1.15:323
+```
+
+From another host or router on the same network, test TCP connectivity:
+
+```bash
+nc -vz 10.0.1.15 323
+```
+
+Configure the router with:
+
+```text
+RTR server: 10.0.1.15
+RTR port: 323
+RTR version: 1 or automatic negotiation
+```
+
+If UFW is later enabled, allow TCP port `323` only from the router address whenever possible:
+
+```bash
+sudo ufw allow from ROUTER_IP_ADDRESS to 10.0.1.15 port 323 proto tcp
+```
+
+## 14. Verify RTR and local-network access
 
 ```bash
 sudo ss -lntp | grep ':8323'
@@ -388,9 +463,7 @@ RTR port: 8323
 RTR version: 1 or automatic negotiation
 ```
 
-
-
-## 14. Firewall considerations
+## 15. Firewall considerations
 
 UFW was disabled in the verified installation. Filtering may still exist at the Proxmox datacenter, node, or VM level, on the router, or between VLANs and subnets.
 
@@ -408,9 +481,7 @@ sudo ufw allow from ROUTER_IP_ADDRESS to 10.0.1.15 port 8323 proto tcp
 
 Access from another routed network requires forward and return routes. If access crosses the public Internet or NAT, use a VPN rather than exposing RTR directly.
 
-
-
-## 15. Time and synchronization
+## 16. Time and synchronization
 
 RPKI validation depends on certificate, manifest, and CRL timestamps. The VM clock must remain synchronized.
 
@@ -438,9 +509,7 @@ To display Uruguay local time without changing the server time zone:
 TZ=America/Montevideo date
 ```
 
-
-
-## 16. Expected resource usage and behavior
+## 17. Expected resource usage and behavior
 
 - The first synchronization is the most expensive; later cycles reuse the local repository.
 - With 2 vCPUs, FORT can approach 200% CPU during intensive processing stages.
@@ -448,9 +517,7 @@ TZ=America/Montevideo date
 - A brief period with zero CPU and I/O immediately before completion can be normal.
 - Do not interrupt the first validation while CPU, network activity, or repository growth continues.
 
-
-
-## 17. Troubleshooting the issues encountered
+## 18. Troubleshooting the issues encountered
 
 ### The `.deb` package cannot be installed
 
@@ -476,7 +543,7 @@ Resolution: create `/etc/fort/config.json` before starting `fort.service`.
 [::]:323: Unable to bind the socket: Permission denied
 ```
 
-Cause: FORT used the privileged default port 323. Verified resolution: use the nested JSON structure and set `server.port` to `8323`.
+Cause: FORT used the privileged default port 323 without the capability required to bind a port below 1024. Resolution: either use the non-privileged port `8323`, as in the main configuration, or grant `CAP_NET_BIND_SERVICE` through systemd and configure the standard port `323` as described in the optional section.
 
 ### Python cannot read `config.json`
 
@@ -490,9 +557,7 @@ Cause: the file permissions are `0640` and ownership is `root:fort`. Validate it
 sudo python3 -m json.tool /etc/fort/config.json > /dev/null
 ```
 
-
-
-## 18. Final checklist
+## 19. Final checklist
 
 - [ ] `fort --version` reports `1.7.0.experimental`.
 - [ ] `ldd` reports no missing libraries.
@@ -501,6 +566,6 @@ sudo python3 -m json.tool /etc/fort/config.json > /dev/null
 - [ ] `validated-roas.csv` exists and contains data.
 - [ ] `/etc/fort/config.json` is valid JSON and readable by the `fort` account.
 - [ ] `fort.service` is `active (running)` and enabled.
-- [ ] FORT listens on `10.0.1.15:8323`.
-- [ ] The router can establish TCP connectivity to `10.0.1.15:8323`.
+- [ ] FORT listens on `10.0.1.15:8323`, or on `10.0.1.15:323` when the optional systemd capability configuration is used.
+- [ ] The router can establish TCP connectivity to the configured RTR port.
 - [ ] The system clock is synchronized and the server time zone is UTC.
