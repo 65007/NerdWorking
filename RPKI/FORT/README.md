@@ -6,7 +6,7 @@ Source build, RPKI validation, systemd service, and RTR access from the local ne
 
 ## Scope
 
-This guide consolidates the steps that were tested successfully on Ubuntu Server 26.04 to install FORT 1.7.0.experimental. The official `.deb` package was not used because it declares legacy dependency package names that Ubuntu 26.04 no longer provides.
+This guide consolidates the steps that were tested successfully on Ubuntu Server 26.04 to install FORT 1.7.0.experimental.
 
 ## 1. Verified environment
 
@@ -26,19 +26,7 @@ This guide consolidates the steps that were tested successfully on Ubuntu Server
 
 ## 2. Why FORT is built from source
 
-The FORT 1.7.0.experimental Debian package was recognized correctly, but `apt` could not install it because it requires legacy package names:
-
-```text
-fort : Depends: libmicrohttpd12
-       Depends: libxml2
-```
-
-Ubuntu 26.04 provides the equivalent runtime packages under these names:
-
-```text
-libmicrohttpd12t64
-libxml2-16
-```
+The official `.deb` package was not used because, although it is an option that significantly shortens the installation and setup steps, I believe that compiling it provides greater possibilities on various operating systems for which the pre-compiled package may not yet be available.
 
 The verified solution was to compile FORT against the native Ubuntu 26.04 libraries. Do not force dependencies or mix packages from older Ubuntu or Debian releases.
 
@@ -527,7 +515,7 @@ Unsatisfied dependencies:
         Depends: libxml2
 ```
 
-Resolution: build from the source tarball against Ubuntu 26.04 `libmicrohttpd-dev` and `libxml2-dev`.
+Resolution: This issue was solved by the authors so now it's possible to get FORT up and running by just installing the official package.
 
 ### The service repeatedly auto-restarts
 
